@@ -4254,9 +4254,12 @@ class OpenAIHandlerMixin:
                     apply_session_sticky_memory_tools as _apply_sticky_mem_tools,
                 )
 
+                # Only the Anthropic stream path executes memory tool calls
+                # (streaming.py `memory_enabled`); skip tools on streamed OpenAI.
+                inject_mem_tools = bool(self.memory_handler.config.inject_tools) and not stream
                 memory_tool_defs = (
                     self.memory_handler.compute_memory_tool_definitions("openai")
-                    if self.memory_handler.config.inject_tools
+                    if inject_mem_tools
                     else []
                 )
                 tools, mem_tools_injected = _apply_sticky_mem_tools(
@@ -4265,7 +4268,7 @@ class OpenAIHandlerMixin:
                     request_id=request_id,
                     existing_tools=tools,
                     memory_tools_to_inject=memory_tool_defs,
-                    inject_this_turn=bool(self.memory_handler.config.inject_tools),
+                    inject_this_turn=inject_mem_tools,
                     client_declared_tools=bool(_original_tools),
                 )
                 if mem_tools_injected:
@@ -5875,7 +5878,10 @@ class OpenAIHandlerMixin:
         ) or _client_can_receive_memory_tools(memory_client)
         if _ensure_chatgpt_responses_store_false(body, is_chatgpt_auth=is_chatgpt_auth):
             logger.info(f"[{request_id}] Responses: forced store=false for ChatGPT auth")
-        responses_memory_tools_allowed = _allow_responses_memory_tools(is_chatgpt_auth)
+        # Streamed Responses turns do not execute memory tool calls; keep tools off.
+        responses_memory_tools_allowed = (
+            _allow_responses_memory_tools(is_chatgpt_auth) and not stream
+        )
 
         # PR-A6 (P5-50, preps P0-6): session-sticky `OpenAI-Beta` merge
         # for /v1/responses. Compute a session_id off the same store the
