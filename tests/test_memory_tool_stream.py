@@ -840,7 +840,8 @@ class TestHandlerPassesServerMemoryTools:
         assert captured["server_memory_tool_names"] == MEMORY_TOOLS
         assert MEMORY_TOOLS <= {t["name"] for t in captured["body"]["tools"]}
 
-    def test_streamed_openai_chat_gets_no_memory_tools(self) -> None:
+    @pytest.mark.parametrize("after_buffered_turn", [False, True])
+    def test_streamed_openai_chat_gets_no_memory_tools(self, after_buffered_turn: bool) -> None:
         from types import SimpleNamespace
 
         from fastapi.responses import StreamingResponse
@@ -876,6 +877,12 @@ class TestHandlerPassesServerMemoryTools:
             }
             for name in sorted(MEMORY_TOOLS)
         ]
+        from headroom.proxy.helpers import (
+            _reset_session_tool_tracker_for_test,
+            apply_session_sticky_memory_tools,
+        )
+
+        _reset_session_tool_tracker_for_test()
         with TestClient(create_app(config)) as client:
             proxy = client.app.state.proxy
             proxy.memory_handler = SimpleNamespace(
@@ -885,6 +892,17 @@ class TestHandlerPassesServerMemoryTools:
                 has_memory_tool_calls=lambda resp, provider: False,
             )
             proxy._stream_response = fake_stream_response
+            proxy.session_tracker_store.compute_session_id = lambda *a, **k: "sess-mixed"
+            if after_buffered_turn:
+                # A buffered turn records the golden memory tools for the session.
+                apply_session_sticky_memory_tools(
+                    provider="openai",
+                    session_id="sess-mixed",
+                    request_id="r0",
+                    existing_tools=[],
+                    memory_tools_to_inject=memory_tools,
+                    inject_this_turn=True,
+                )
             client.post(
                 "/v1/chat/completions",
                 headers={"authorization": "Bearer sk-test", "x-headroom-user-id": "u1"},
@@ -896,6 +914,7 @@ class TestHandlerPassesServerMemoryTools:
                 },
             )
 
+        _reset_session_tool_tracker_for_test()
         names = {t["function"]["name"] for t in captured["body"]["tools"]}
         assert names == {"Bash"}
 

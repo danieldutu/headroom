@@ -4255,25 +4255,26 @@ class OpenAIHandlerMixin:
                 )
 
                 # Only the Anthropic stream path executes memory tool calls
-                # (streaming.py `memory_enabled`); skip tools on streamed OpenAI.
-                inject_mem_tools = bool(self.memory_handler.config.inject_tools) and not stream
-                memory_tool_defs = (
-                    self.memory_handler.compute_memory_tool_definitions("openai")
-                    if inject_mem_tools
-                    else []
-                )
-                tools, mem_tools_injected = _apply_sticky_mem_tools(
-                    provider="openai",
-                    session_id=openai_session_id,
-                    request_id=request_id,
-                    existing_tools=tools,
-                    memory_tools_to_inject=memory_tool_defs,
-                    inject_this_turn=inject_mem_tools,
-                    client_declared_tools=bool(_original_tools),
-                )
-                if mem_tools_injected:
-                    memory_tools_injected = True
-                    logger.info(f"[{request_id}] Memory: Injected memory tools (openai)")
+                # (streaming.py `memory_enabled`). Skip the whole call on a
+                # streamed turn: the sticky replay would re-add golden tools.
+                if not stream:
+                    memory_tool_defs = (
+                        self.memory_handler.compute_memory_tool_definitions("openai")
+                        if self.memory_handler.config.inject_tools
+                        else []
+                    )
+                    tools, mem_tools_injected = _apply_sticky_mem_tools(
+                        provider="openai",
+                        session_id=openai_session_id,
+                        request_id=request_id,
+                        existing_tools=tools,
+                        memory_tools_to_inject=memory_tool_defs,
+                        inject_this_turn=bool(self.memory_handler.config.inject_tools),
+                        client_declared_tools=bool(_original_tools),
+                    )
+                    if mem_tools_injected:
+                        memory_tools_injected = True
+                        logger.info(f"[{request_id}] Memory: Injected memory tools (openai)")
             except Exception as e:
                 logger.warning(f"[{request_id}] Memory injection failed: {e}")
 
